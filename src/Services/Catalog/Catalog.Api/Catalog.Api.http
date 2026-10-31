@@ -1,0 +1,41 @@
+@host = http://localhost:5100
+
+### Список жанров (5 штук уже лежат в базе после миграции)
+GET {{host}}/api/genres
+
+### Создать мангу с жанрами "Сэйнэн" и "Фэнтези"
+POST {{host}}/api/manga
+Content-Type: application/json
+
+{
+  "title": "Berserk",
+  "author": "Kentaro Miura",
+  "genreIds": [
+    "11111111-0000-0000-0000-000000000002",
+    "11111111-0000-0000-0000-000000000003"
+  ]
+}
+
+### Все тайтлы
+GET {{host}}/api/manga
+
+### Фильтр по жанру "Фэнтези"
+GET {{host}}/api/manga?genreId=11111111-0000-0000-0000-000000000003
+
+### Один тайтл (подставьте id из ответа на POST)
+GET {{host}}/api/manga/00000000-0000-0000-0000-000000000000
+
+### Завершить тайтл (подставьте id)
+POST {{host}}/api/manga/00000000-0000-0000-0000-000000000000/complete
+
+### Пустое название -> 400 (сработало правило домена)
+POST {{host}}/api/manga
+Content-Type: application/json
+
+{ "title": "", "author": "Кто-то" }
+
+### Несуществующий жанр -> 404
+POST {{host}}/api/manga
+Content-Type: application/json
+
+{ "title": "Test", "author": "Test", "genreIds": ["99999999-0000-0000-0000-000000000000"] }
