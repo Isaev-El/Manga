@@ -135,7 +135,7 @@ namespace Catalog.Infrastructure.Migrations
 
                     b.HasIndex("MangaId");
 
-                    b.ToTable("manga_genres");
+                    b.ToTable("manga_genres", (string)null);
                 });
 
             modelBuilder.Entity("manga_genres", b =>

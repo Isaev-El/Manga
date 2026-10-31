@@ -1,9 +1,11 @@
 using Catalog.Application.Abstractions;
+using Catalog.Application.Commands;
 using Catalog.Domain;
+using FluentValidation;
 
 namespace Catalog.Application;
 
-public class MangaService(IMangaRepository mangas, IGenreRepository genres, IUnitOfWork unitOfWork)
+public class MangaService(IMangaRepository mangas, IGenreRepository genres, IUnitOfWork unitOfWork, IValidator<CreateMangaCommand> validator)
 {
     public async Task<IReadOnlyList<MangaDto>> ListAsync(Guid? genreId, CancellationToken ct)
     {
@@ -19,10 +21,11 @@ public class MangaService(IMangaRepository mangas, IGenreRepository genres, IUni
         return manga.ToDto();
     }
 
-    public async Task<Guid> CreateAsync(
-        string title, string author, IReadOnlyList<Guid> genreIds, CancellationToken ct)
+    public async Task<Guid> CreateAsync(CreateMangaCommand command, IReadOnlyList<Guid> genreIds, CancellationToken ct)
     {
-        var manga = Manga.Create(title, author);
+        await validator.ValidateAndThrowAsync(command, ct);
+        
+        var manga = Manga.Create(command.Title, command.Author);
 
         var found = await genres.GetByIdsAsync(genreIds, ct);
         if (found.Count != genreIds.Distinct().Count())

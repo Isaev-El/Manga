@@ -8,6 +8,14 @@ using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("Frontend",
+            policy => policy.WithOrigins("http://localhost:5100").AllowAnyHeader().AllowAnyMethod()
+        );
+    }
+);
+
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
@@ -17,6 +25,8 @@ builder.Services.AddInfrastructure(
     ?? throw new InvalidOperationException("Не задана строка подключения ConnectionStrings:Catalog"));
 
 var app = builder.Build();
+
+app.UseCors("Frontend");
 
 // Применяем миграции при старте: база и таблицы создаются сами, достаточно dotnet run
 using (var scope = app.Services.CreateScope())
@@ -29,6 +39,13 @@ using (var scope = app.Services.CreateScope())
 app.UseExceptionHandler(handler => handler.Run(async context =>
 {
     var error = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+
+    if (error is FluentValidation.ValidationException validationException)
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsJsonAsync(new { error = validationException.Errors.GroupBy(x => x.PropertyName)
+            .ToDictionary(x => x.Key, x => x.Select(y => y.ErrorMessage).ToArray()) });
+    }
 
     context.Response.StatusCode = error switch
     {

@@ -1,3 +1,5 @@
+using Catalog.Application.Validators;
+using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Catalog.Application;
@@ -8,6 +10,9 @@ public static class DependencyInjection
     {
         services.AddScoped<MangaService>();
         services.AddScoped<GenreService>();
+        
+        services.AddValidatorsFromAssembly(typeof(DependencyInjection).Assembly);
+        
         return services;
     }
 }

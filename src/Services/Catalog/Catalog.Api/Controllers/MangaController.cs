@@ -1,9 +1,10 @@
 using Catalog.Application;
+using Catalog.Application.Commands;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Catalog.Api.Controllers;
 
-public record CreateMangaRequest(string Title, string Author, List<Guid>? GenreIds);
+public record CreateMangaRequest(string Title, string Author, List<Guid> GenreIds);
 
 [ApiController]
 [Route("api/manga")]
@@ -20,8 +21,8 @@ public class MangaController(MangaService service) : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create(CreateMangaRequest request, CancellationToken ct)
     {
-        var id = await service.CreateAsync(
-            request.Title, request.Author, request.GenreIds ?? [], ct);
+        var manga = new CreateMangaCommand(Title: request.Title, Author: request.Author, GenreIds: request.GenreIds);
+        var id = await service.CreateAsync(manga, request.GenreIds ?? [], ct);
 
         return CreatedAtAction(nameof(Get), new { id }, new { id });
     }
