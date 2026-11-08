@@ -1,5 +1,5 @@
-using Catalog.Application;
-using Catalog.Application.Commands;
+using Catalog.Application.Features.Chapters;
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Catalog.Api.Controllers;
@@ -8,33 +8,31 @@ public record CreateChapterRequest(decimal Number, string? Title);
 public record AddPageRequest(string ImageKey);
 
 [ApiController]
-public class ChaptersController(ChapterService service) : ControllerBase
+public class ChaptersController(ISender sender) : ControllerBase
 {
     /// <summary>Главы тайтла по порядку номеров.</summary>
     [HttpGet("api/manga/{mangaId:guid}/chapters")]
     public async Task<IActionResult> List(Guid mangaId, CancellationToken ct) =>
-        Ok(await service.ListAsync(mangaId, ct));
+        Ok(await sender.Send(new ListChaptersQuery(mangaId), ct));
 
     /// <summary>Создать черновик главы.</summary>
     [HttpPost("api/manga/{mangaId:guid}/chapters")]
     public async Task<IActionResult> Create(Guid mangaId, CreateChapterRequest request, CancellationToken ct)
     {
-        var id = await service.CreateAsync(
-            new CreateChapterCommand(mangaId, request.Number, request.Title), ct);
-
+        var id = await sender.Send(new CreateChapterCommand(mangaId, request.Number, request.Title), ct);
         return CreatedAtAction(nameof(Get), new { id }, new { id });
     }
 
     /// <summary>Глава со страницами.</summary>
     [HttpGet("api/chapters/{id:guid}")]
     public async Task<IActionResult> Get(Guid id, CancellationToken ct) =>
-        Ok(await service.GetAsync(id, ct));
+        Ok(await sender.Send(new GetChapterQuery(id), ct));
 
     /// <summary>Добавить страницу в конец черновика.</summary>
     [HttpPost("api/chapters/{id:guid}/pages")]
     public async Task<IActionResult> AddPage(Guid id, AddPageRequest request, CancellationToken ct)
     {
-        var number = await service.AddPageAsync(id, new AddPageCommand(request.ImageKey), ct);
+        var number = await sender.Send(new AddPageCommand(id, request.ImageKey), ct);
         return Ok(new { number });
     }
 
@@ -42,7 +40,7 @@ public class ChaptersController(ChapterService service) : ControllerBase
     [HttpDelete("api/chapters/{id:guid}/pages/{number:int}")]
     public async Task<IActionResult> RemovePage(Guid id, int number, CancellationToken ct)
     {
-        await service.RemovePageAsync(id, number, ct);
+        await sender.Send(new RemovePageCommand(id, number), ct);
         return NoContent();
     }
 
@@ -50,7 +48,7 @@ public class ChaptersController(ChapterService service) : ControllerBase
     [HttpPost("api/chapters/{id:guid}/publish")]
     public async Task<IActionResult> Publish(Guid id, CancellationToken ct)
     {
-        await service.PublishAsync(id, ct);
+        await sender.Send(new PublishChapterCommand(id), ct);
         return NoContent();
     }
 }

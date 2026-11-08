@@ -66,7 +66,7 @@ dotnet ef migrations add НазваниеМиграции --project src\Services
 | Проект | Что внутри |
 |---|---|
 | `Catalog.Domain` | Сущности `Manga`, `Genre`, `Chapter` (со страницами), бизнес-правила, доменные события |
-| `Catalog.Application` | Сценарии (`MangaService`), интерфейсы репозиториев и Unit of Work, DTO |
+| `Catalog.Application` | Команды и запросы (MediatR): папка `Features`, интерфейсы репозиториев и Unit of Work, DTO |
 | `Catalog.Infrastructure` | EF Core + PostgreSQL, репозитории, Unit of Work, outbox, миграции |
 | `Catalog.Api` | Контроллеры, обработка ошибок, запуск |
 
@@ -75,7 +75,7 @@ dotnet ef migrations add НазваниеМиграции --project src\Services
 ## Как устроено сохранение
 
 1. Сущность меняется и записывает событие: `manga.Complete()` → `MangaCompleted`.
-2. Сервис вызывает `unitOfWork.SaveChangesAsync()`.
+2. Обработчик команды вызывает `unitOfWork.SaveChangesAsync()`.
 3. Unit of Work собирает события со всех изменённых сущностей, кладёт их в таблицу
    `outbox_messages` и сохраняет всё **одной транзакцией**.
 
@@ -115,3 +115,24 @@ Pull request с красной проверкой не мерджится. Ес�
 ```cmd
 docker pull ghcr.io/isaev-el/manga-catalog:test
 ```
+
+## Команды, запросы и MediatR
+
+Каждая операция — **один файл** в `Catalog.Application/Features/<Раздел>/`, в нём:
+
+1. **Команда или запрос** — record с данными: `CreateMangaCommand : IRequest<Guid>`.
+2. **Валидатор** (если нужен) — `AbstractValidator<CreateMangaCommand>`.
+3. **Обработчик** — `IRequestHandler<CreateMangaCommand, Guid>`: сам сценарий.
+
+Команда меняет данные (`Create…`, `Complete…`, `Publish…`), запрос только читает (`Get…`, `List…`).
+
+Контроллер отправляет её через `ISender.Send(...)`, а MediatR сам находит обработчик.
+Перед обработчиком запрос проходит через `ValidationBehavior` (`Behaviors/`):
+он запускает все валидаторы и при ошибках возвращает 400, не доходя до обработчика.
+
+```
+Контроллер -> ISender.Send(command) -> ValidationBehavior -> Handler -> UnitOfWork
+```
+
+**Новая операция** = новый файл в `Features`. Регистрировать ничего не нужно:
+обработчики и валидаторы находятся автоматически.
