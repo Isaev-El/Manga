@@ -45,12 +45,14 @@ app.UseExceptionHandler(handler => handler.Run(async context =>
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
         await context.Response.WriteAsJsonAsync(new { error = validationException.Errors.GroupBy(x => x.PropertyName)
             .ToDictionary(x => x.Key, x => x.Select(y => y.ErrorMessage).ToArray()) });
+        return; // ответ уже записан, второй раз писать нельзя
     }
 
     context.Response.StatusCode = error switch
     {
         DomainException => StatusCodes.Status400BadRequest,
         NotFoundException => StatusCodes.Status404NotFound,
+        ConflictException => StatusCodes.Status409Conflict,
         _ => StatusCodes.Status500InternalServerError
     };
 

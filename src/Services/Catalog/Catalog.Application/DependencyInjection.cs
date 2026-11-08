@@ -10,6 +10,7 @@ public static class DependencyInjection
     {
         services.AddScoped<MangaService>();
         services.AddScoped<GenreService>();
+        services.AddScoped<ChapterService>();
         
         services.AddValidatorsFromAssembly(typeof(DependencyInjection).Assembly);
         

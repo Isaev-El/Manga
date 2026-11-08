@@ -31,6 +31,23 @@ API работает на http://localhost:5100. Запросы для пров�
 dotnet run --project src\Services\Catalog\Catalog.Api
 ```
 
+## Запуск в Docker (без установки Postgres и .NET)
+
+Нужен только Docker Desktop.
+
+```cmd
+docker compose up --build
+```
+
+Поднимутся два контейнера: Postgres и Catalog API.
+API: http://localhost:5100/scalar. База из контейнера доступна на порту **5433**
+(не 5432 — чтобы не конфликтовать с локально установленным Postgres).
+
+Остановить: `Ctrl+C`, затем `docker compose down`.
+Удалить и данные базы: `docker compose down -v`.
+
+Если локально уже запущен Catalog через `run.cmd` — остановите его: порт 5100 будет занят.
+
 ## Если у вас другой пароль от Postgres
 
 Поменяйте его в `src/Services/Catalog/Catalog.Api/appsettings.json`
@@ -41,14 +58,14 @@ dotnet run --project src\Services\Catalog\Catalog.Api
 Обязательно создайте миграцию, иначе приложение не запустится:
 
 ```cmd
-dotnet ef migrations add НазваниеМиграции --project src\Services\Catalog\Catalog.Infrastructure --startup-project src\Services\Catalog\Catalog.Api --output-dir Persistence\Migrations
+dotnet ef migrations add НазваниеМиграции --project src\Services\Catalog\Catalog.Infrastructure --startup-project src\Services\Catalog\Catalog.Api --output-dir Migrations
 ```
 
 ## Структура сервиса Catalog
 
 | Проект | Что внутри |
 |---|---|
-| `Catalog.Domain` | Сущности `Manga`, `Genre`, бизнес-правила, доменные события |
+| `Catalog.Domain` | Сущности `Manga`, `Genre`, `Chapter` (со страницами), бизнес-правила, доменные события |
 | `Catalog.Application` | Сценарии (`MangaService`), интерфейсы репозиториев и Unit of Work, DTO |
 | `Catalog.Infrastructure` | EF Core + PostgreSQL, репозитории, Unit of Work, outbox, миграции |
 | `Catalog.Api` | Контроллеры, обработка ошибок, запуск |
@@ -63,3 +80,18 @@ dotnet ef migrations add НазваниеМиграции --project src\Services
    `outbox_messages` и сохраняет всё **одной транзакцией**.
 
 Позже события из outbox будут отправляться в RabbitMQ другим сервисам.
+
+## Главы
+
+Глава создаётся черновиком, в неё добавляются страницы, затем она публикуется.
+
+| Правило | Ответ при нарушении |
+|---|---|
+| Номер главы > 0, можно дробный (10.5) | 400 |
+| Номер уникален в пределах тайтла | 409 |
+| Страницы можно менять только в черновике | 400 |
+| Опубликовать главу без страниц нельзя | 400 |
+
+При публикации глава поднимает событие `ChapterPublished`, и оно попадает в `outbox_messages`.
+
+Новая миграция: `add-migration.cmd ИмяМиграции`.
