@@ -12,6 +12,9 @@ public class MangaRepository(CatalogDbContext db) : IMangaRepository
             .Include(m => m.Genres)
             .FirstOrDefaultAsync(m => m.Id == id, ct);
 
+    public Task<bool> ExistsAsync(Guid id, CancellationToken ct = default) =>
+        db.Mangas.AnyAsync(m => m.Id == id, ct);
+
     public async Task<IReadOnlyList<Manga>> ListAsync(Guid? genreId, CancellationToken ct = default)
     {
         IQueryable<Manga> query = db.Mangas

@@ -39,3 +39,60 @@ POST {{host}}/api/manga
 Content-Type: application/json
 
 { "title": "Test", "author": "Test", "genreIds": ["99999999-0000-0000-0000-000000000000"] }
+
+### ================= ГЛАВЫ =================
+# Подставьте id манги из ответа на POST /api/manga
+@mangaId = 00000000-0000-0000-0000-000000000000
+# Подставьте id главы из ответа на создание главы
+@chapterId = 00000000-0000-0000-0000-000000000000
+
+### Создать черновик главы
+POST {{host}}/api/manga/{{mangaId}}/chapters
+Content-Type: application/json
+
+{ "number": 1, "title": "Чёрный мечник" }
+
+### Экстра-глава с дробным номером
+POST {{host}}/api/manga/{{mangaId}}/chapters
+Content-Type: application/json
+
+{ "number": 1.5 }
+
+### Повторный номер -> 409
+POST {{host}}/api/manga/{{mangaId}}/chapters
+Content-Type: application/json
+
+{ "number": 1 }
+
+### Главы тайтла по порядку
+GET {{host}}/api/manga/{{mangaId}}/chapters
+
+### Публикация без страниц -> 400
+POST {{host}}/api/chapters/{{chapterId}}/publish
+
+### Добавить страницы
+POST {{host}}/api/chapters/{{chapterId}}/pages
+Content-Type: application/json
+
+{ "imageKey": "berserk/ch1/001.jpg" }
+
+###
+POST {{host}}/api/chapters/{{chapterId}}/pages
+Content-Type: application/json
+
+{ "imageKey": "berserk/ch1/002.jpg" }
+
+### Удалить первую страницу (вторая станет первой)
+DELETE {{host}}/api/chapters/{{chapterId}}/pages/1
+
+### Глава со страницами
+GET {{host}}/api/chapters/{{chapterId}}
+
+### Опубликовать (после этого в outbox_messages появится ChapterPublished)
+POST {{host}}/api/chapters/{{chapterId}}/publish
+
+### Добавить страницу в опубликованную главу -> 400
+POST {{host}}/api/chapters/{{chapterId}}/pages
+Content-Type: application/json
+
+{ "imageKey": "berserk/ch1/003.jpg" }

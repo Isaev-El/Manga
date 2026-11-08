@@ -1,13 +1,14 @@
-using Catalog.Application;
+using Catalog.Application.Features.Genres;
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Catalog.Api.Controllers;
 
 [ApiController]
 [Route("api/genres")]
-public class GenresController(GenreService service) : ControllerBase
+public class GenresController(ISender sender) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct) =>
-        Ok(await service.ListAsync(ct));
+        Ok(await sender.Send(new ListGenresQuery(), ct));
 }

@@ -31,6 +31,23 @@ API работает на http://localhost:5100. Запросы для пров�
 dotnet run --project src\Services\Catalog\Catalog.Api
 ```
 
+## Запуск в Docker (без установки Postgres и .NET)
+
+Нужен только Docker Desktop.
+
+```cmd
+docker compose up --build
+```
+
+Поднимутся два контейнера: Postgres и Catalog API.
+API: http://localhost:5100/scalar. База из контейнера доступна на порту **5433**
+(не 5432 — чтобы не конфликтовать с локально установленным Postgres).
+
+Остановить: `Ctrl+C`, затем `docker compose down`.
+Удалить и данные базы: `docker compose down -v`.
+
+Если локально уже запущен Catalog через `run.cmd` — остановите его: порт 5100 будет занят.
+
 ## Если у вас другой пароль от Postgres
 
 Поменяйте его в `src/Services/Catalog/Catalog.Api/appsettings.json`
@@ -41,15 +58,15 @@ dotnet run --project src\Services\Catalog\Catalog.Api
 Обязательно создайте миграцию, иначе приложение не запустится:
 
 ```cmd
-dotnet ef migrations add НазваниеМиграции --project src\Services\Catalog\Catalog.Infrastructure --startup-project src\Services\Catalog\Catalog.Api --output-dir Persistence\Migrations
+dotnet ef migrations add НазваниеМиграции --project src\Services\Catalog\Catalog.Infrastructure --startup-project src\Services\Catalog\Catalog.Api --output-dir Migrations
 ```
 
 ## Структура сервиса Catalog
 
 | Проект | Что внутри |
 |---|---|
-| `Catalog.Domain` | Сущности `Manga`, `Genre`, бизнес-правила, доменные события |
-| `Catalog.Application` | Сценарии (`MangaService`), интерфейсы репозиториев и Unit of Work, DTO |
+| `Catalog.Domain` | Сущности `Manga`, `Genre`, `Chapter` (со страницами), бизнес-правила, доменные события |
+| `Catalog.Application` | Команды и запросы (MediatR): папка `Features`, интерфейсы репозиториев и Unit of Work, DTO |
 | `Catalog.Infrastructure` | EF Core + PostgreSQL, репозитории, Unit of Work, outbox, миграции |
 | `Catalog.Api` | Контроллеры, обработка ошибок, запуск |
 
@@ -58,8 +75,64 @@ dotnet ef migrations add НазваниеМиграции --project src\Services
 ## Как устроено сохранение
 
 1. Сущность меняется и записывает событие: `manga.Complete()` → `MangaCompleted`.
-2. Сервис вызывает `unitOfWork.SaveChangesAsync()`.
+2. Обработчик команды вызывает `unitOfWork.SaveChangesAsync()`.
 3. Unit of Work собирает события со всех изменённых сущностей, кладёт их в таблицу
    `outbox_messages` и сохраняет всё **одной транзакцией**.
 
 Позже события из outbox будут отправляться в RabbitMQ другим сервисам.
+
+## Главы
+
+Глава создаётся черновиком, в неё добавляются страницы, затем она публикуется.
+
+| Правило | Ответ при нарушении |
+|---|---|
+| Номер главы > 0, можно дробный (10.5) | 400 |
+| Номер уникален в пределах тайтла | 409 |
+| Страницы можно менять только в черновике | 400 |
+| Опубликовать главу без страниц нельзя | 400 |
+
+При публикации глава поднимает событие `ChapterPublished`, и оно попадает в `outbox_messages`.
+
+Новая миграция: `add-migration.cmd ИмяМиграции`.
+
+## CI/CD (GitHub Actions)
+
+Файл `.github/workflows/pipeline.yml`.
+
+| Событие | Что происходит |
+|---|---|
+| Pull request в `main` или `test` | Сборка, проверка «не забыта ли миграция», smoke-тест API на настоящем Postgres |
+| Merge в `test` | То же + Docker-образ `ghcr.io/isaev-el/manga-catalog:test` |
+| Merge в `main` | То же + образ с тегами `:main` и `:latest` |
+
+Pull request с красной проверкой не мерджится. Если упало:
+- **Check that no migration is missing** — вы поменяли модель и не создали миграцию (`add-migration.cmd Имя`);
+- **Smoke test** — API не запускается или эндпоинт отвечает не тем кодом; лог приложения в шаге **API log**.
+
+Запустить опубликованный образ:
+
+```cmd
+docker pull ghcr.io/isaev-el/manga-catalog:test
+```
+
+## Команды, запросы и MediatR
+
+Каждая операция — **один файл** в `Catalog.Application/Features/<Раздел>/`, в нём:
+
+1. **Команда или запрос** — record с данными: `CreateMangaCommand : IRequest<Guid>`.
+2. **Валидатор** (если нужен) — `AbstractValidator<CreateMangaCommand>`.
+3. **Обработчик** — `IRequestHandler<CreateMangaCommand, Guid>`: сам сценарий.
+
+Команда меняет данные (`Create…`, `Complete…`, `Publish…`), запрос только читает (`Get…`, `List…`).
+
+Контроллер отправляет её через `ISender.Send(...)`, а MediatR сам находит обработчик.
+Перед обработчиком запрос проходит через `ValidationBehavior` (`Behaviors/`):
+он запускает все валидаторы и при ошибках возвращает 400, не доходя до обработчика.
+
+```
+Контроллер -> ISender.Send(command) -> ValidationBehavior -> Handler -> UnitOfWork
+```
+
+**Новая операция** = новый файл в `Features`. Регистрировать ничего не нужно:
+обработчики и валидаторы находятся автоматически.

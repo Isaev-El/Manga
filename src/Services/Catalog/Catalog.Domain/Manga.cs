@@ -13,15 +13,10 @@ public class Manga : Entity
     public DateTime CreatedAtUtc { get; private set; }
     public IReadOnlyCollection<Genre> Genres => _genres;
 
-    private Manga() { } // нужен EF Core
+    private Manga() { }
 
     public static Manga Create(string title, string author)
     {
-        if (string.IsNullOrWhiteSpace(title))
-            throw new DomainException("Название обязательно");
-        if (string.IsNullOrWhiteSpace(author))
-            throw new DomainException("Автор обязателен");
-
         var manga = new Manga
         {
             Id = Guid.NewGuid(),
