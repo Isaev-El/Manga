@@ -95,3 +95,23 @@ dotnet ef migrations add НазваниеМиграции --project src\Services
 При публикации глава поднимает событие `ChapterPublished`, и оно попадает в `outbox_messages`.
 
 Новая миграция: `add-migration.cmd ИмяМиграции`.
+
+## CI/CD (GitHub Actions)
+
+Файл `.github/workflows/pipeline.yml`.
+
+| Событие | Что происходит |
+|---|---|
+| Pull request в `main` или `test` | Сборка, проверка «не забыта ли миграция», smoke-тест API на настоящем Postgres |
+| Merge в `test` | То же + Docker-образ `ghcr.io/isaev-el/manga-catalog:test` |
+| Merge в `main` | То же + образ с тегами `:main` и `:latest` |
+
+Pull request с красной проверкой не мерджится. Если упало:
+- **Check that no migration is missing** — вы поменяли модель и не создали миграцию (`add-migration.cmd Имя`);
+- **Smoke test** — API не запускается или эндпоинт отвечает не тем кодом; лог приложения в шаге **API log**.
+
+Запустить опубликованный образ:
+
+```cmd
+docker pull ghcr.io/isaev-el/manga-catalog:test
+```
