@@ -17,6 +17,8 @@ public static class DependencyInjection
 
             // каждый запрос перед обработчиком проходит через валидацию
             cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
+            
+            cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
         });
 
         // находит все AbstractValidator<T> в этом проекте
