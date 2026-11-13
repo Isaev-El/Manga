@@ -41,9 +41,6 @@ public class PerformanceBehaviour<TRequest, TResponse>(ILoggerFactory loggerFact
                 var seconds = timer.Elapsed.TotalSeconds.ToString("0.000", CultureInfo.InvariantCulture);
             
                 _logger.LogWarning("Операция: - {Operation}, время выполнения {Seconds}с.", typeof(TRequest).Name, seconds);
-                // Видно лог. Сделать так, чтобы все логи собирались в файле в корне. Формат:
-                // Операция - GetListMangas, время выполнения 2.344с. 
-                // МР на ветку test
             }
         }
     }

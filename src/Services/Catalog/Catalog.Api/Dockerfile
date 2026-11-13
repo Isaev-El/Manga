@@ -13,6 +13,12 @@ RUN dotnet publish src/Services/Catalog/Catalog.Api/Catalog.Api.csproj \
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y libgssapi-krb5-2 && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /app/logs \
+    && chown $APP_UID:$APP_UID /app/logs
+
 COPY --from=build /app/publish .
 
 EXPOSE 8080
