@@ -18,10 +18,13 @@ public class Chapter : Entity
     public ChapterStatus Status { get; private set; }
     public DateTime CreatedAtUtc { get; private set; }
     public DateTime? PublishedAtUtc { get; private set; }
+    public uint Version { get; private set; }
+    public long Revision { get; private set; }
     public IReadOnlyCollection<Page> Pages => _pages;
 
     private Chapter() { } // нужен EF Core
 
+    private void Touch() => Revision++;
     public static Chapter CreateDraft(Guid mangaId, decimal number, string? title)
     {
         if (mangaId == Guid.Empty)
@@ -50,7 +53,9 @@ public class Chapter : Entity
 
         var page = new Page(_pages.Count + 1, imageKey.Trim());
         _pages.Add(page);
+        Touch();
         return page.Number;
+        
     }
 
     /// <summary>Удаляет страницу, следующие страницы сдвигаются, чтобы номера шли без пропусков.</summary>
@@ -65,6 +70,7 @@ public class Chapter : Entity
 
         foreach (var next in _pages.Where(p => p.Number > number))
             next.MoveTo(next.Number - 1);
+        Touch();
     }
 
     public void Publish()

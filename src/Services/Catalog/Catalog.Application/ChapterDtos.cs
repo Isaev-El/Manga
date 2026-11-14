@@ -11,7 +11,8 @@ public record ChapterDto(
     string Status,
     int PageCount,
     DateTime CreatedAtUtc,
-    DateTime? PublishedAtUtc);
+    DateTime? PublishedAtUtc,
+    uint Version);
 
 public record PageDto(int Number, string ImageKey);
 
@@ -24,17 +25,18 @@ public record ChapterDetailsDto(
     string Status,
     DateTime CreatedAtUtc,
     DateTime? PublishedAtUtc,
+    uint Version,
     IReadOnlyList<PageDto> Pages);
 
 internal static class ChapterMapping
 {
     public static ChapterDto ToDto(this Chapter c) => new(
         c.Id, c.MangaId, c.Number, c.Title, c.Status.ToString(),
-        c.Pages.Count, c.CreatedAtUtc, c.PublishedAtUtc);
+        c.Pages.Count, c.CreatedAtUtc, c.PublishedAtUtc, c.Version);
 
     public static ChapterDetailsDto ToDetailsDto(this Chapter c) => new(
         c.Id, c.MangaId, c.Number, c.Title, c.Status.ToString(),
-        c.CreatedAtUtc, c.PublishedAtUtc,
+        c.CreatedAtUtc, c.PublishedAtUtc, c.Version,
         c.Pages
             .OrderBy(p => p.Number) // из базы страницы приходят без гарантии порядка
             .Select(p => new PageDto(p.Number, p.ImageKey))
