@@ -1,0 +1,201 @@
+# CI/CD для сервиса Catalog
+#
+#  Pull request в main или test:  build -> smoke-test
+#  Push (merge) в main или test:   build -> smoke-test -> publish (Docker-образ в GitHub Container Registry)
+#
+#  Образы:
+#    ветка test -> ghcr.io/<владелец>/manga-catalog:test
+#    ветка main -> ghcr.io/<владелец>/manga-catalog:main и :latest
+#    плюс тег с коротким хешем коммита (sha-xxxxxxx) — чтобы можно было откатиться на любую версию
+
+name: Catalog CI/CD
+
+on:
+  pull_request:
+    branches: [main, test]
+  push:
+    branches: [main, test]
+  workflow_dispatch: # ручной запуск из вкладки Actions
+
+# Новый запуск для той же ветки отменяет старый, ещё не закончившийся
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  INFRA_PROJECT: src/Services/Catalog/Catalog.Infrastructure
+  API_PROJECT: src/Services/Catalog/Catalog.Api
+
+jobs:
+  # ---------------------------------------------------------------
+  # 1. Сборка и проверка миграций
+  # ---------------------------------------------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore MangaReader.slnx
+
+      - name: Build
+        run: dotnet build MangaReader.slnx -c Release --no-restore
+
+      - name: Tests
+        run: dotnet test MangaReader.slnx -c Release --no-build
+
+      # Самая частая ошибка студентов: поменяли сущность и забыли создать миграцию.
+      # Тогда приложение падает при старте. Ловим это здесь, до мерджа.
+      - name: Check that no migration is missing
+        run: |
+          dotnet tool restore
+          dotnet ef migrations has-pending-model-changes \
+            --project "$INFRA_PROJECT" --startup-project "$API_PROJECT" \
+            --configuration Release --no-build
+
+  # ---------------------------------------------------------------
+  # 2. Smoke-тест: запускаем API на настоящем Postgres и дёргаем эндпоинты
+  # ---------------------------------------------------------------
+  smoke-test:
+    name: Smoke test
+    needs: build
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: manga_catalog
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      ConnectionStrings__Catalog: Host=localhost;Port=5432;Database=manga_catalog;Username=postgres;Password=postgres
+      BASE: http://localhost:5100
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build "$API_PROJECT" -c Release
+
+      - name: Start API (migrations apply on startup)
+        run: |
+          nohup dotnet run --project "$API_PROJECT" -c Release --no-build \
+            --no-launch-profile --urls "$BASE" > api.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf "$BASE/api/genres" > /dev/null; then echo "API is up"; exit 0; fi
+            sleep 1
+          done
+          echo "API did not start in 60 seconds"; cat api.log; exit 1
+
+      - name: Genres are seeded
+        run: |
+          count=$(curl -sf "$BASE/api/genres" | jq 'length')
+          echo "genres: $count"
+          test "$count" -eq 5
+
+      - name: Manga and chapter flow
+        run: |
+          set -e
+          expect() { # expect <код> <метод> <путь> [тело]
+            local code
+            code=$(curl -s -o resp.json -w '%{http_code}' -X "$2" "$BASE$3" \
+              -H 'Content-Type: application/json' ${4:+-d "$4"})
+            echo "$2 $3 -> $code (ожидали $1)"; cat resp.json; echo
+            test "$code" -eq "$1"
+          }
+
+          expect 201 POST /api/manga '{"title":"Berserk","author":"Kentaro Miura","genreIds":["11111111-0000-0000-0000-000000000002"]}'
+          manga=$(jq -r .id resp.json)
+
+          expect 400 POST /api/manga '{"title":"","author":"","genreIds":[]}'
+
+          expect 201 POST "/api/manga/$manga/chapters" '{"number":1,"title":"Чёрный мечник"}'
+          chapter=$(jq -r .id resp.json)
+
+          expect 409 POST "/api/manga/$manga/chapters" '{"number":1}'
+          expect 400 POST "/api/chapters/$chapter/publish"
+          expect 200 POST "/api/chapters/$chapter/pages" '{"imageKey":"berserk/ch1/001.jpg"}'
+          expect 204 POST "/api/chapters/$chapter/publish"
+          expect 400 POST "/api/chapters/$chapter/pages" '{"imageKey":"berserk/ch1/002.jpg"}'
+
+          expect 200 GET "/api/manga/$manga/chapters"
+          test "$(jq -r '.[0].status' resp.json)" = "Published"
+
+      - name: API log
+        if: always()
+        run: cat api.log || true
+
+  # ---------------------------------------------------------------
+  # 3. Публикация Docker-образа (только после merge/push в main или test)
+  # ---------------------------------------------------------------
+  publish:
+    name: Publish Docker image
+    needs: smoke-test
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Имя образа в реестре обязано быть в нижнем регистре (Isaev-El -> isaev-el)
+      - name: Image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/manga-catalog" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Services/Catalog/Catalog.Api/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------
+  # 4. Деплой — появится, когда будет сервер (AWS)
+  # ---------------------------------------------------------------
+  # deploy:
+  #   needs: publish
+  #   environment: ${{ github.ref_name == 'main' && 'production' || 'test' }}
+  #   ...

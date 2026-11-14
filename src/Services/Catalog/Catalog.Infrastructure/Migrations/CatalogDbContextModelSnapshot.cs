@@ -22,6 +22,41 @@ namespace Catalog.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Catalog.Domain.Chapter", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MangaId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Number")
+                        .HasPrecision(8, 2)
+                        .HasColumnType("numeric(8,2)");
+
+                    b.Property<DateTime?>("PublishedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MangaId", "Number")
+                        .IsUnique();
+
+                    b.ToTable("chapters", (string)null);
+                });
+
             modelBuilder.Entity("Catalog.Domain.Genre", b =>
                 {
                     b.Property<Guid>("Id")
@@ -135,7 +170,44 @@ namespace Catalog.Infrastructure.Migrations
 
                     b.HasIndex("MangaId");
 
-                    b.ToTable("manga_genres", (string)null);
+                    b.ToTable("manga_genres");
+                });
+
+            modelBuilder.Entity("Catalog.Domain.Chapter", b =>
+                {
+                    b.HasOne("Catalog.Domain.Manga", null)
+                        .WithMany()
+                        .HasForeignKey("MangaId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.OwnsMany("Catalog.Domain.Page", "Pages", b1 =>
+                        {
+                            b1.Property<Guid>("Id")
+                                .HasColumnType("uuid");
+
+                            b1.Property<Guid>("ChapterId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("ImageKey")
+                                .IsRequired()
+                                .HasMaxLength(500)
+                                .HasColumnType("character varying(500)");
+
+                            b1.Property<int>("Number")
+                                .HasColumnType("integer");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("ChapterId");
+
+                            b1.ToTable("chapter_pages", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("ChapterId");
+                        });
+
+                    b.Navigation("Pages");
                 });
 
             modelBuilder.Entity("manga_genres", b =>
