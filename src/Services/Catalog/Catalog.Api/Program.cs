@@ -5,8 +5,11 @@ using Catalog.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Logging.ClearProviders();
 
 builder.Services.AddCors(options =>
     {
@@ -18,6 +21,15 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+
+builder.Host.UseSerilog((context, loggerConfiguration) =>
+{
+    loggerConfiguration
+        .ReadFrom.Configuration(
+        context.Configuration
+    );
+    
+});
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(
@@ -65,6 +77,7 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference(); // http://localhost:5100/scalar
 }
 
+app.UseSerilogRequestLogging();
 app.MapControllers();
 
 app.Run();
