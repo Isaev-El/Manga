@@ -5,15 +5,21 @@ cd "$(dirname "$0")"
 echo "[1/3] Restoring tools (dotnet-ef)..."
 dotnet tool restore
 
-if [ -d "src/Services/Catalog/Catalog.Infrastructure/Migrations" ]; then
-  echo "[2/3] Migrations already exist, skipping."
-else
-  echo "[2/3] Creating initial migration..."
-  dotnet ef migrations add Init \
-    --project src/Services/Catalog/Catalog.Infrastructure \
-    --startup-project src/Services/Catalog/Catalog.Api \
-    --output-dir Migrations
-fi
+echo "[2/3] Checking migrations..."
+for S in Catalog Activity; do
+  if [ ! -d "src/Services/$S/$S.Infrastructure/Migrations" ]; then
+    echo "Creating initial migration for $S..."
+    dotnet ef migrations add Init \
+      --project "src/Services/$S/$S.Infrastructure" \
+      --startup-project "src/Services/$S/$S.Api" \
+      --output-dir Migrations
+  fi
+done
 
-echo "[3/3] Starting Catalog API on http://localhost:5100 ..."
-dotnet run --project src/Services/Catalog/Catalog.Api
+echo "[3/3] Starting services..."
+echo "  Catalog  API: http://localhost:5100"
+echo "  Activity API: http://localhost:5200"
+dotnet run --project src/Services/Catalog/Catalog.Api &
+CATALOG_PID=$!
+trap 'kill $CATALOG_PID 2>/dev/null' EXIT
+dotnet run --project src/Services/Activity/Activity.Api

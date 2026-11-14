@@ -1,6 +1,9 @@
 # Запуск всего вместе: docker compose up --build
-# Catalog API:  http://localhost:5100/scalar
-# Postgres:     localhost:5433 (5433, чтобы не конфликтовать с локально установленным Postgres на 5432)
+# Catalog API:   http://localhost:5100/scalar
+# Activity API:  http://localhost:5200/scalar
+# Postgres Catalog:  localhost:5433, Postgres Activity: localhost:5434
+# (не 5432, чтобы не конфликтовать с локально установленным Postgres)
+# У каждого сервиса своя база — главное правило микросервисов.
 
 services:
   catalog-db:
@@ -32,5 +35,39 @@ services:
       catalog-db:
         condition: service_healthy   # ждём, пока база реально начнёт принимать подключения
 
+  activity-db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: manga_activity
+    ports:
+      - "5434:5432"
+    volumes:
+      - activity-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d manga_activity"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  activity-api:
+    build:
+      context: .
+      dockerfile: src/Services/Activity/Activity.Api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Activity: "Host=activity-db;Port=5432;Database=manga_activity;Username=postgres;Password=postgres"
+      # внутри сети Docker сервисы видят друг друга по имени и внутреннему порту
+      Services__CatalogUrl: "http://catalog-api:8080/"
+    ports:
+      - "5200:8080"
+    depends_on:
+      activity-db:
+        condition: service_healthy
+      catalog-api:
+        condition: service_started
+
 volumes:
   catalog-db-data:
+  activity-db-data:

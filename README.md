@@ -1,7 +1,12 @@
 # MangaReader
 
 Учебный проект: сайт для чтения манги на микросервисах (.NET 10, чистая архитектура).
-Сейчас в проекте один сервис — **Catalog** (тайтлы и жанры).
+Сервисы:
+
+| Сервис | Что делает | Порт | База | Хранение |
+|---|---|---|---|---|
+| **Catalog** | Тайтлы, жанры, главы и страницы | 5100 | `manga_catalog` | Обычные таблицы + outbox |
+| **Activity** | Списки пользователя, прогресс чтения, оценки | 5200 | `manga_activity` | **Event sourcing** |
 
 ## Что нужно установить
 
@@ -21,14 +26,19 @@ run.cmd
 
 На macOS / Linux: `./run.sh`
 
-База `manga_catalog`, таблицы и пять жанров создадутся автоматически.
-API работает на http://localhost:5100. Запросы для проверки — в файле
-`src/Services/Catalog/Catalog.Api/Catalog.Api.http` (открывается в Rider, VS, VS Code).
+`run.cmd` запускает оба сервиса: Catalog в отдельном окне, Activity в текущем.
+Базы `manga_catalog` и `manga_activity`, таблицы и пять жанров создадутся автоматически.
 
-Дальше можно запускать просто так:
+- Catalog: http://localhost:5100/scalar, запросы — `src/Services/Catalog/Catalog.Api/Catalog.Api.http`
+- Activity: http://localhost:5200/scalar, запросы — `src/Services/Activity/Activity.Api/Activity.Api.http`
+
+Activity обращается к Catalog по HTTP, поэтому Catalog должен быть запущен.
+
+Дальше можно запускать по отдельности:
 
 ```cmd
 dotnet run --project src\Services\Catalog\Catalog.Api
+dotnet run --project src\Services\Activity\Activity.Api
 ```
 
 ## Запуск в Docker (без установки Postgres и .NET)
@@ -136,3 +146,40 @@ docker pull ghcr.io/isaev-el/manga-catalog:test
 
 **Новая операция** = новый файл в `Features`. Регистрировать ничего не нужно:
 обработчики и валидаторы находятся автоматически.
+
+## Activity и event sourcing
+
+Activity хранит не текущее состояние, а **историю действий** пользователя с тайтлом — как банковская выписка
+вместо остатка на счёте.
+
+**Таблица `events`** — главная, источник правды. Действия только добавляются, ничего не меняется и не удаляется:
+
+| StreamId | Version | Type | Data |
+|---|---|---|---|
+| reading-ivan-7f3c… | 1 | AddedToList | `{"status":"Reading"}` |
+| reading-ivan-7f3c… | 2 | ChapterRead | `{"chapterId":"…","number":1}` |
+| reading-ivan-7f3c… | 3 | Rated | `{"score":9}` |
+
+**Таблица `library_entries`** — проекция: готовый итог всех событий для быстрого показа «моих списков».
+Её можно удалить и собрать заново из `events`.
+
+**Как обрабатывается команда** (например, «прочитал главу»):
+
+1. `ReadingEntryRepository.LoadAsync` читает события потока.
+2. `ReadingEntry.Load` проигрывает их по порядку (`Apply`) — получается текущее состояние.
+3. Метод агрегата (`MarkChapterRead`) проверяет правила и создаёт новое событие.
+4. `SaveAsync` дописывает событие в `events` и обновляет `library_entries` — одной транзакцией.
+5. Если кто-то успел записать событие с тем же номером, уникальный индекс `(StreamId, Version)` не даст
+   сохранить, и API вернёт **409**.
+
+| Где | Файл |
+|---|---|
+| Агрегат и правила | `Activity.Domain/ReadingEntry.cs` |
+| События | `Activity.Domain/Events/ReadingEvents.cs` |
+| Хранилище событий | `Activity.Infrastructure/Repositories/ReadingEntryRepository.cs` |
+| Проекция | `Activity.Infrastructure/Projections/LibraryEntryProjector.cs` |
+| Запросы на чтение | `Activity.Infrastructure/ReadModel/LibraryReadModel.cs` |
+
+Пользователь пока передаётся заголовком `X-User-Id` — когда появится сервис Identity, его заменит JWT.
+
+Новая миграция для Activity: `add-migration.cmd ИмяМиграции Activity`.

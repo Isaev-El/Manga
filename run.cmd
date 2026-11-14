@@ -5,16 +5,20 @@ echo [1/3] Restoring tools (dotnet-ef)...
 dotnet tool restore
 if errorlevel 1 goto :error
 
-if exist "src\Services\Catalog\Catalog.Infrastructure\Migrations" (
-    echo [2/3] Migrations already exist, skipping.
-) else (
-    echo [2/3] Creating initial migration...
-    dotnet ef migrations add Init --project src\Services\Catalog\Catalog.Infrastructure --startup-project src\Services\Catalog\Catalog.Api --output-dir Migrations
-    if errorlevel 1 goto :error
+echo [2/3] Checking migrations...
+for %%S in (Catalog Activity) do (
+    if not exist "src\Services\%%S\%%S.Infrastructure\Migrations" (
+        echo Creating initial migration for %%S...
+        dotnet ef migrations add Init --project src\Services\%%S\%%S.Infrastructure --startup-project src\Services\%%S\%%S.Api --output-dir Migrations
+        if errorlevel 1 goto :error
+    )
 )
 
-echo [3/3] Starting Catalog API on http://localhost:5100 ...
-dotnet run --project src\Services\Catalog\Catalog.Api
+echo [3/3] Starting services...
+echo   Catalog  API: http://localhost:5100  (separate window)
+echo   Activity API: http://localhost:5200
+start "Catalog API" dotnet run --project src\Services\Catalog\Catalog.Api
+dotnet run --project src\Services\Activity\Activity.Api
 goto :eof
 
 :error
