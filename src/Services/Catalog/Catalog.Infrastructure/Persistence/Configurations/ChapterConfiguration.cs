@@ -15,6 +15,8 @@ public class ChapterConfiguration : IEntityTypeConfiguration<Chapter>
         builder.Property(c => c.Title).HasMaxLength(200);
         builder.Property(c => c.Status).HasConversion<string>().HasMaxLength(20);
 
+        builder.Property(c => c.Version).IsRowVersion();
+        
         builder.Ignore(c => c.DomainEvents);
 
         // Внутри одного сервиса внешний ключ на мангу допустим.

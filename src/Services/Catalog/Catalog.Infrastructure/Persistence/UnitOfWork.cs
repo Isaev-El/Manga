@@ -1,7 +1,9 @@
 using System.Text.Json;
+using Catalog.Application;
 using Catalog.Application.Abstractions;
 using Catalog.Domain.Common;
 using Catalog.Infrastructure.Outbox;
+using Microsoft.EntityFrameworkCore;
 
 namespace Catalog.Infrastructure.Persistence;
 
@@ -32,6 +34,15 @@ public class UnitOfWork(CatalogDbContext db) : IUnitOfWork
         db.OutboxMessages.AddRange(messages);
 
         // 3. Одна транзакция: сохранятся либо и данные, и события, либо ничего
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new ConflictException("Данные были изменены другим пользователем. Обновите страницу и попробуйте снова.");
+        }
+
     }
+    
 }
