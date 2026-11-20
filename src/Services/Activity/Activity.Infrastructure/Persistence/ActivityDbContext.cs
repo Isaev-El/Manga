@@ -12,6 +12,9 @@ public class ActivityDbContext(DbContextOptions<ActivityDbContext> options) : Db
     /// <summary>Проекция "мои списки" — итог событий для быстрого чтения.</summary>
     public DbSet<LibraryEntryRow> LibraryEntries => Set<LibraryEntryRow>();
 
+    /// <summary>Проекция комментариев к главам.</summary>
+    public DbSet<ChapterCommentRow> ChapterComments => Set<ChapterCommentRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder) =>
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ActivityDbContext).Assembly);
 }

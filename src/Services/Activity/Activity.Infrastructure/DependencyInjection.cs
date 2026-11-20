@@ -1,5 +1,6 @@
 using Activity.Application.Abstractions;
 using Activity.Infrastructure.Catalog;
+using Activity.Infrastructure.EventStore;
 using Activity.Infrastructure.Persistence;
 using Activity.Infrastructure.ReadModel;
 using Activity.Infrastructure.Repositories;
@@ -15,6 +16,7 @@ public static class DependencyInjection
     {
         services.AddDbContext<ActivityDbContext>(options => options.UseNpgsql(connectionString));
 
+        services.AddScoped<EventStoreService>();
         services.AddScoped<IReadingEntryRepository, ReadingEntryRepository>();
         services.AddScoped<ILibraryReadModel, LibraryReadModel>();
 
