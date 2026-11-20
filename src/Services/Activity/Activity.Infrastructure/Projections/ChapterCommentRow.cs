@@ -10,6 +10,7 @@ public class ChapterCommentRow
     public Guid ChapterId { get; set; }
     public string UserId { get; set; } = null!;
     public string Text { get; set; } = null!;
+    public Guid? ParentCommentId { get; set; }
     public bool IsDeleted { get; set; }
     public int EditCount { get; set; }
     public DateTime CreatedAtUtc { get; set; }

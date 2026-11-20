@@ -6,6 +6,9 @@ using Npgsql;
 
 namespace Activity.Infrastructure.EventStore;
 
+/// <summary>Сохранённое событие вместе с номером версии в своём потоке.</summary>
+public sealed record StoredEvent(int Version, DomainEvent Event);
+
 /// <summary>
 /// Общая работа с таблицей events: чтение потока и добавление новых событий.
 /// Используется всеми агрегатами сервиса (сейчас — ReadingEntry, дальше — ChapterComment).
@@ -18,6 +21,11 @@ public sealed class EventStoreService(ActivityDbContext db)
 {
     /// <summary>Читает все события потока по порядку версий.</summary>
     public async Task<IReadOnlyList<DomainEvent>> ReadStreamAsync(
+        string streamId, CancellationToken ct = default) =>
+        (await ReadStreamWithVersionsAsync(streamId, ct)).Select(x => x.Event).ToList();
+
+    /// <summary>То же, но с номерами версий — нужно для истории событий.</summary>
+    public async Task<IReadOnlyList<StoredEvent>> ReadStreamWithVersionsAsync(
         string streamId, CancellationToken ct = default)
     {
         var records = await db.Events
@@ -27,7 +35,7 @@ public sealed class EventStoreService(ActivityDbContext db)
             .ToListAsync(ct);
 
         return records
-            .Select(r => EventSerializer.Deserialize(r.Type, r.Data))
+            .Select(r => new StoredEvent(r.Version, EventSerializer.Deserialize(r.Type, r.Data)))
             .ToList();
     }
 

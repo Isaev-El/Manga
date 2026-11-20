@@ -19,7 +19,10 @@ public static class EventSerializer
         typeof(ListStatusChanged),
         typeof(ChapterRead),
         typeof(Rated),
-        typeof(RemovedFromList)
+        typeof(RemovedFromList),
+        typeof(CommentPosted),
+        typeof(CommentEdited),
+        typeof(CommentDeleted)
     }.ToDictionary(t => t.Name);
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)

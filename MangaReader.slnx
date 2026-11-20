@@ -13,4 +13,7 @@
     <Project Path="src/Services/Activity/Activity.Domain/Activity.Domain.csproj" />
     <Project Path="src/Services/Activity/Activity.Infrastructure/Activity.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Activity.Domain.Tests/Activity.Domain.Tests.csproj" />
+  </Folder>
 </Solution>

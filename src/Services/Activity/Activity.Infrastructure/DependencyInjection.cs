@@ -18,7 +18,9 @@ public static class DependencyInjection
 
         services.AddScoped<EventStoreService>();
         services.AddScoped<IReadingEntryRepository, ReadingEntryRepository>();
+        services.AddScoped<IChapterCommentRepository, ChapterCommentRepository>();
         services.AddScoped<ILibraryReadModel, LibraryReadModel>();
+        services.AddScoped<ICommentReadModel, CommentReadModel>();
 
         services.AddHttpClient<ICatalogClient, CatalogClient>(client =>
         {
