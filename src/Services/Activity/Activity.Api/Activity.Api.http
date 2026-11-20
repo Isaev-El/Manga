@@ -1,10 +1,19 @@
 @host = http://localhost:5200
 @catalog = http://localhost:5100
 @user = ivan
+@otherUser = petr
 
 # Подставьте id из Catalog: манга и ОПУБЛИКОВАННАЯ глава этой манги
 @mangaId = 00000000-0000-0000-0000-000000000000
 @chapterId = 00000000-0000-0000-0000-000000000000
+# Подставьте id черновика главы (для проверки 400)
+@draftChapterId = 00000000-0000-0000-0000-000000000000
+# Подставьте id из ответов POST ниже: первый комментарий правим, второй удаляем
+@commentId = 00000000-0000-0000-0000-000000000000
+@commentId2 = 00000000-0000-0000-0000-000000000000
+@replyId = 00000000-0000-0000-0000-000000000000
+# Ещё одна опубликованная глава той же манги — для проверки "родитель из другой главы"
+@otherChapterId = 00000000-0000-0000-0000-000000000000
 
 ### Сначала возьмите id манги из Catalog
 GET {{catalog}}/api/manga
@@ -68,3 +77,96 @@ GET {{host}}/api/library
 ### Убрать из списков
 DELETE {{host}}/api/library/{{mangaId}}
 X-User-Id: {{user}}
+
+# ================= КОММЕНТАРИИ =================
+# Глава должна быть Published (создаётся и публикуется в Catalog.Api.http).
+# 1) POST -> 201, в теле ответа {"id": "..."} — подставьте его в @commentId.
+
+### Добавить комментарий к опубликованной главе -> 201
+POST {{host}}/api/chapters/{{chapterId}}/comments
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "text": "Первый комментарий" }
+
+### Второй комментарий (его удалим) -> 201, id -> @commentId2
+POST {{host}}/api/chapters/{{chapterId}}/comments
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "text": "Второй комментарий" }
+
+### 2) PUT -> 204. Тот же текст -> тоже 204, но новой записи в events не будет.
+PUT {{host}}/api/comments/{{commentId}}
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "text": "Отредактированный комментарий" }
+
+### 3) DELETE -> 204. Повторный DELETE -> тоже 204 без записи.
+DELETE {{host}}/api/comments/{{commentId2}}
+X-User-Id: {{user}}
+
+### 4) Список комментариев главы -> 200. Удалённый текст подменён на "Комментарий удалён".
+GET {{host}}/api/chapters/{{chapterId}}/comments?page=1&pageSize=20
+
+### 5) История комментария из events -> 200, версии 1..N с типом события, текстом и временем.
+GET {{host}}/api/comments/{{commentId}}/history
+
+### Чужой комментарий редактировать нельзя -> 403
+PUT {{host}}/api/comments/{{commentId}}
+X-User-Id: {{otherUser}}
+Content-Type: application/json
+
+{ "text": "Чужая правка" }
+
+### Комментарий к черновику -> 400
+POST {{host}}/api/chapters/{{draftChapterId}}/comments
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "text": "Рановато" }
+
+### pageSize > 100 -> 400
+GET {{host}}/api/chapters/{{chapterId}}/comments?page=1&pageSize=101
+
+### Пустой текст -> 400
+POST {{host}}/api/chapters/{{chapterId}}/comments
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "text": "   " }
+
+### История неизвестного комментария -> 404
+GET {{host}}/api/comments/99999999-9999-9999-9999-999999999999/history
+
+### Ответ на комментарий -> 201, id из ответа -> @replyId
+POST {{host}}/api/chapters/{{chapterId}}/comments
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "text": "Ответ на первый комментарий", "parentCommentId": "{{commentId}}" }
+
+### Второй уровень вложенности -> 400 (у ответа уже есть ParentCommentId)
+POST {{host}}/api/chapters/{{chapterId}}/comments
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "text": "Второй уровень", "parentCommentId": "{{replyId}}" }
+
+### Родитель из другой главы -> 400
+POST {{host}}/api/chapters/{{otherChapterId}}/comments
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "text": "Ответ не в той главе", "parentCommentId": "{{commentId}}" }
+
+### Несуществующий родитель -> 404
+POST {{host}}/api/chapters/{{chapterId}}/comments
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "text": "Ответ на призрак", "parentCommentId": "99999999-9999-9999-9999-999999999999" }
+
+### В списке у ответа заполнен parentCommentId
+GET {{host}}/api/chapters/{{chapterId}}/comments?page=1&pageSize=20

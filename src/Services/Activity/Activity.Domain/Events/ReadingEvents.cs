@@ -1,3 +1,5 @@
+using Activity.Domain.Common;
+
 namespace Activity.Domain.Events;
 
 /// <summary>
@@ -5,10 +7,7 @@ namespace Activity.Domain.Events;
 /// События — это факты: они только добавляются и никогда не меняются и не удаляются.
 /// Из них вычисляется текущее состояние (ReadingEntry) и строятся проекции.
 /// </summary>
-public abstract record ReadingEvent
-{
-    public DateTime OccurredOnUtc { get; init; } = DateTime.UtcNow;
-}
+public abstract record ReadingEvent : DomainEvent;
 
 /// <summary>Добавил тайтл в список.</summary>
 public sealed record AddedToList(ListStatus Status) : ReadingEvent;
