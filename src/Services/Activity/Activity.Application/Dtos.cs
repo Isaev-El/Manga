@@ -16,3 +16,24 @@ public record HistoryItemDto(int Version, string Event, JsonElement Data, DateTi
 
 /// <summary>Средняя оценка тайтла по всем пользователям.</summary>
 public record MangaRatingDto(Guid MangaId, double? Average, int Votes);
+
+/// <summary>Статистика чтения за день.</summary>
+public record DailyReadingStatsDto(
+    DateOnly Day,
+    int ChaptersRead,
+    int ActiveReaders,
+    int TitlesAdded);
+
+public record TopMangaDto(
+    Guid MangaId,
+    int ChaptersRead,
+    int InLists,
+    int Completed);
+
+public record DropOffDto(
+    decimal ChapterNumber,
+    int ReadersStopped);
+
+public record RebuildResult(
+    int EventsProcessed,
+    int Batches);

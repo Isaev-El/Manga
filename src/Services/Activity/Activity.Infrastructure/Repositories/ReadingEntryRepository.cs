@@ -3,20 +3,17 @@ using Activity.Application.Abstractions;
 using Activity.Domain;
 using Activity.Infrastructure.EventStore;
 using Activity.Infrastructure.Persistence;
-using Activity.Infrastructure.Projections;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
 namespace Activity.Infrastructure.Repositories;
 
-/// <summary>
-/// Репозиторий агрегата поверх хранилища событий.
-/// Load — читает поток и проигрывает его. Save — дописывает новые события
-/// и обновляет проекцию одной транзакцией.
-/// </summary>
-public class ReadingEntryRepository(ActivityDbContext db) : IReadingEntryRepository
+public class ReadingEntryRepository(
+    ActivityDbContext db,
+    IEnumerable<IProjection> projections) : IReadingEntryRepository
 {
-    public async Task<ReadingEntry> LoadAsync(string userId, Guid mangaId, CancellationToken ct = default)
+    public async Task<ReadingEntry> LoadAsync(
+        string userId, Guid mangaId, CancellationToken ct = default)
     {
         var streamId = ReadingEntry.StreamId(userId, mangaId);
 
@@ -33,50 +30,62 @@ public class ReadingEntryRepository(ActivityDbContext db) : IReadingEntryReposit
     public async Task SaveAsync(ReadingEntry entry, CancellationToken ct = default)
     {
         if (entry.UncommittedEvents.Count == 0)
-            return; // ничего не изменилось
+            return;
 
         var streamId = ReadingEntry.StreamId(entry.UserId, entry.MangaId);
 
-        // Строка проекции: есть — обновим, нет — создадим
-        var row = await db.LibraryEntries
-            .FirstOrDefaultAsync(x => x.UserId == entry.UserId && x.MangaId == entry.MangaId, ct);
-
-        if (row is null)
-        {
-            row = new LibraryEntryRow { UserId = entry.UserId, MangaId = entry.MangaId };
-            db.LibraryEntries.Add(row);
-        }
-
-        // Новые события получают номера сразу после последнего загруженного
-        var version = entry.Version;
-        foreach (var e in entry.UncommittedEvents)
-        {
-            version++;
-
-            // 1. Дописываем событие в конец истории
-            db.Events.Add(new EventRecord
-            {
-                StreamId = streamId,
-                Version = version,
-                Type = EventSerializer.TypeName(e),
-                Data = EventSerializer.Serialize(e),
-                OccurredOnUtc = e.OccurredOnUtc
-            });
-
-            // 2. Обновляем проекцию тем же событием
-            LibraryEntryProjector.Apply(row, e, version);
-        }
+        // Одна транзакция: события и все проекции сохраняются вместе.
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
 
         try
         {
-            // 3. Одна транзакция: и события, и проекция — либо всё, либо ничего
+            var version = entry.Version;
+            var projected = new List<ProjectionEvent>();
+
+            foreach (var e in entry.UncommittedEvents)
+            {
+                version++;
+
+                db.Events.Add(new EventRecord
+                {
+                    StreamId = streamId,
+                    Version = version,
+                    Type = EventSerializer.TypeName(e),
+                    Data = EventSerializer.Serialize(e),
+                    OccurredOnUtc = e.OccurredOnUtc
+                });
+
+                projected.Add(new ProjectionEvent(
+                    e, entry.UserId, entry.MangaId, version));
+            }
+
+            // 1. Сохраняем события. После этого они уже в БД внутри транзакции.
             await db.SaveChangesAsync(ct);
+
+            // 2. Обновляем все проекции.
+            //    Репозиторий не знает, какие они: DI подставит список
+            //    всех зарегистрированных IProjection.
+            foreach (var projectionEvent in projected)
+            {
+                foreach (var projection in projections)
+                    await projection.ApplyAsync(projectionEvent, ct);
+            }
+
+            // 3. EF сохраняет изменения LibraryEntryProjection.
+            //    Stats-проекции пишут SQL сразу, им SaveChanges не нужен.
+            await db.SaveChangesAsync(ct);
+
+            await transaction.CommitAsync(ct);
         }
-        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        catch (DbUpdateException ex)
+            when (ex.InnerException is PostgresException
+                  { SqlState: PostgresErrorCodes.UniqueViolation })
         {
-            // Кто-то успел записать событие с тем же номером раньше нас
+            await transaction.RollbackAsync(ct);
             db.ChangeTracker.Clear();
-            throw new ConflictException("Данные изменились одновременно с вашим запросом. Повторите действие");
+
+            throw new ConflictException(
+                "Данные изменились одновременно с вашим запросом. Повторите действие");
         }
 
         entry.MarkEventsAsCommitted();

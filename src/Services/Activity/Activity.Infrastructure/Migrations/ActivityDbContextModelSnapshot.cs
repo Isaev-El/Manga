@@ -52,6 +52,10 @@ namespace Activity.Infrastructure.Migrations
 
                     b.HasKey("Position");
 
+                    b.HasIndex("OccurredOnUtc");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("OccurredOnUtc"), "brin");
+
                     b.HasIndex("StreamId", "Version")
                         .IsUnique();
 
@@ -92,6 +96,75 @@ namespace Activity.Infrastructure.Migrations
                     b.HasIndex("MangaId");
 
                     b.ToTable("library_entries", (string)null);
+                });
+
+            modelBuilder.Entity("Activity.Infrastructure.Projections.Stats.DailyActiveReaderRow", b =>
+                {
+                    b.Property<DateOnly>("Day")
+                        .HasColumnType("date");
+
+                    b.Property<string>("UserId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Day", "UserId");
+
+                    b.ToTable("daily_active_readers", (string)null);
+                });
+
+            modelBuilder.Entity("Activity.Infrastructure.Projections.Stats.DailyReadingStatsRow", b =>
+                {
+                    b.Property<DateOnly>("Day")
+                        .HasColumnType("date");
+
+                    b.Property<int>("ActiveReaders")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ChaptersRead")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TitlesAdded")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Day");
+
+                    b.ToTable("daily_reading_stats", (string)null);
+                });
+
+            modelBuilder.Entity("Activity.Infrastructure.Projections.Stats.MangaCompletedReaderRow", b =>
+                {
+                    b.Property<Guid>("MangaId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("UserId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("MangaId", "UserId");
+
+                    b.ToTable("manga_completed_readers", (string)null);
+                });
+
+            modelBuilder.Entity("Activity.Infrastructure.Projections.Stats.MangaReadingStatsRow", b =>
+                {
+                    b.Property<Guid>("MangaId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ChaptersRead")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Completed")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("InLists")
+                        .HasColumnType("integer");
+
+                    b.HasKey("MangaId");
+
+                    b.HasIndex("ChaptersRead");
+
+                    b.ToTable("manga_reading_stats", (string)null);
                 });
 #pragma warning restore 612, 618
         }
