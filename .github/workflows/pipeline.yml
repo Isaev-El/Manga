@@ -1,20 +1,21 @@
-# CI/CD для сервиса Catalog
+# CI/CD для сервисов Catalog и Activity
 #
-#  Pull request в main или test:  build -> smoke-test
-#  Push (merge) в main или test:   build -> smoke-test -> publish (Docker-образ в GitHub Container Registry)
+#  Pull request в main, test или release:  build -> smoke-test
+#  Push (merge) в main, test или release:   build -> smoke-test -> publish (Docker-образы в GitHub Container Registry)
 #
-#  Образы:
-#    ветка test -> ghcr.io/<владелец>/manga-catalog:test
-#    ветка main -> ghcr.io/<владелец>/manga-catalog:main и :latest
+#  Образы (на каждый сервис свой):
+#    ветка test    -> ghcr.io/<владелец>/manga-<сервис>:test
+#    ветка release -> ghcr.io/<владелец>/manga-<сервис>:release
+#    ветка main    -> ghcr.io/<владелец>/manga-<сервис>:main и :latest
 #    плюс тег с коротким хешем коммита (sha-xxxxxxx) — чтобы можно было откатиться на любую версию
 
-name: Catalog CI/CD
+name: MangaReader CI/CD
 
 on:
   pull_request:
-    branches: [main, test]
+    branches: [main, test, release]
   push:
-    branches: [main, test]
+    branches: [main, test, release]
   workflow_dispatch: # ручной запуск из вкладки Actions
 
 # Новый запуск для той же ветки отменяет старый, ещё не закончившийся
@@ -25,12 +26,14 @@ concurrency:
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
-  INFRA_PROJECT: src/Services/Catalog/Catalog.Infrastructure
-  API_PROJECT: src/Services/Catalog/Catalog.Api
+  CATALOG_INFRA: src/Services/Catalog/Catalog.Infrastructure
+  CATALOG_API: src/Services/Catalog/Catalog.Api
+  ACTIVITY_INFRA: src/Services/Activity/Activity.Infrastructure
+  ACTIVITY_API: src/Services/Activity/Activity.Api
 
 jobs:
   # ---------------------------------------------------------------
-  # 1. Сборка и проверка миграций
+  # 1. Сборка всего решения и проверка миграций обоих сервисов
   # ---------------------------------------------------------------
   build:
     name: Build
@@ -51,17 +54,22 @@ jobs:
       - name: Tests
         run: dotnet test MangaReader.slnx -c Release --no-build
 
-      # Самая частая ошибка студентов: поменяли сущность и забыли создать миграцию.
+      # Самая частая ошибка: поменяли сущность и забыли создать миграцию.
       # Тогда приложение падает при старте. Ловим это здесь, до мерджа.
       - name: Check that no migration is missing
         run: |
           dotnet tool restore
+          echo "--- Catalog"
           dotnet ef migrations has-pending-model-changes \
-            --project "$INFRA_PROJECT" --startup-project "$API_PROJECT" \
+            --project "$CATALOG_INFRA" --startup-project "$CATALOG_API" \
+            --configuration Release --no-build
+          echo "--- Activity"
+          dotnet ef migrations has-pending-model-changes \
+            --project "$ACTIVITY_INFRA" --startup-project "$ACTIVITY_API" \
             --configuration Release --no-build
 
   # ---------------------------------------------------------------
-  # 2. Smoke-тест: запускаем API на настоящем Postgres и дёргаем эндпоинты
+  # 2. Smoke-тест: оба сервиса на настоящем Postgres, сценарий через HTTP
   # ---------------------------------------------------------------
   smoke-test:
     name: Smoke test
@@ -84,8 +92,12 @@ jobs:
           --health-retries 10
 
     env:
+      # базу manga_activity Activity создаст сам при запуске (MigrateAsync)
       ConnectionStrings__Catalog: Host=localhost;Port=5432;Database=manga_catalog;Username=postgres;Password=postgres
-      BASE: http://localhost:5100
+      ConnectionStrings__Activity: Host=localhost;Port=5432;Database=manga_activity;Username=postgres;Password=postgres
+      Services__CatalogUrl: http://localhost:5100/
+      CATALOG: http://localhost:5100
+      ACTIVITY: http://localhost:5200
 
     steps:
       - uses: actions/checkout@v4
@@ -95,61 +107,96 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Build
-        run: dotnet build "$API_PROJECT" -c Release
+        run: dotnet build MangaReader.slnx -c Release
 
-      - name: Start API (migrations apply on startup)
+      - name: Start services (migrations apply on startup)
         run: |
-          nohup dotnet run --project "$API_PROJECT" -c Release --no-build \
-            --no-launch-profile --urls "$BASE" > api.log 2>&1 &
-          for i in $(seq 1 60); do
-            if curl -sf "$BASE/api/genres" > /dev/null; then echo "API is up"; exit 0; fi
-            sleep 1
-          done
-          echo "API did not start in 60 seconds"; cat api.log; exit 1
+          wait_for() { # wait_for <url> <лог>
+            for i in $(seq 1 60); do
+              if curl -s -o /dev/null "$1"; then echo "$1 is up"; return 0; fi
+              sleep 1
+            done
+            echo "$1 did not start in 60 seconds"; cat "$2"; return 1
+          }
 
-      - name: Genres are seeded
-        run: |
-          count=$(curl -sf "$BASE/api/genres" | jq 'length')
-          echo "genres: $count"
-          test "$count" -eq 5
+          nohup dotnet run --project "$CATALOG_API" -c Release --no-build \
+            --no-launch-profile --urls "$CATALOG" > catalog.log 2>&1 &
+          wait_for "$CATALOG/api/genres" catalog.log
 
-      - name: Manga and chapter flow
+          nohup dotnet run --project "$ACTIVITY_API" -c Release --no-build \
+            --no-launch-profile --urls "$ACTIVITY" > activity.log 2>&1 &
+          wait_for "$ACTIVITY/api/manga/00000000-0000-0000-0000-000000000000/rating" activity.log
+
+      - name: Scenario
         run: |
           set -e
-          expect() { # expect <код> <метод> <путь> [тело]
+          expect() { # expect <код> <метод> <url> [тело] [user]
             local code
-            code=$(curl -s -o resp.json -w '%{http_code}' -X "$2" "$BASE$3" \
-              -H 'Content-Type: application/json' ${4:+-d "$4"})
-            echo "$2 $3 -> $code (ожидали $1)"; cat resp.json; echo
+            code=$(curl -s -o resp.json -w '%{http_code}' -X "$2" "$3" \
+              -H 'Content-Type: application/json' ${5:+-H "X-User-Id: $5"} ${4:+-d "$4"})
+            echo "$2 $3 -> $code (ожидали $1)"; cat resp.json 2>/dev/null; echo
             test "$code" -eq "$1"
           }
 
-          expect 201 POST /api/manga '{"title":"Berserk","author":"Kentaro Miura","genreIds":["11111111-0000-0000-0000-000000000002"]}'
+          echo "===== Catalog ====="
+          count=$(curl -sf "$CATALOG/api/genres" | jq 'length'); test "$count" -eq 5
+
+          expect 201 POST "$CATALOG/api/manga" '{"title":"Berserk","author":"Kentaro Miura","genreIds":["11111111-0000-0000-0000-000000000002"]}'
           manga=$(jq -r .id resp.json)
+          expect 400 POST "$CATALOG/api/manga" '{"title":"","author":"","genreIds":[]}'
 
-          expect 400 POST /api/manga '{"title":"","author":"","genreIds":[]}'
-
-          expect 201 POST "/api/manga/$manga/chapters" '{"number":1,"title":"Чёрный мечник"}'
+          expect 201 POST "$CATALOG/api/manga/$manga/chapters" '{"number":1,"title":"Чёрный мечник"}'
           chapter=$(jq -r .id resp.json)
+          expect 409 POST "$CATALOG/api/manga/$manga/chapters" '{"number":1}'
+          expect 400 POST "$CATALOG/api/chapters/$chapter/publish"
+          expect 200 POST "$CATALOG/api/chapters/$chapter/pages" '{"imageKey":"berserk/ch1/001.jpg"}'
+          expect 204 POST "$CATALOG/api/chapters/$chapter/publish"
+          expect 400 POST "$CATALOG/api/chapters/$chapter/pages" '{"imageKey":"berserk/ch1/002.jpg"}'
 
-          expect 409 POST "/api/manga/$manga/chapters" '{"number":1}'
-          expect 400 POST "/api/chapters/$chapter/publish"
-          expect 200 POST "/api/chapters/$chapter/pages" '{"imageKey":"berserk/ch1/001.jpg"}'
-          expect 204 POST "/api/chapters/$chapter/publish"
-          expect 400 POST "/api/chapters/$chapter/pages" '{"imageKey":"berserk/ch1/002.jpg"}'
+          expect 201 POST "$CATALOG/api/manga/$manga/chapters" '{"number":2}'
+          draft=$(jq -r .id resp.json)
 
-          expect 200 GET "/api/manga/$manga/chapters"
-          test "$(jq -r '.[0].status' resp.json)" = "Published"
+          echo "===== Activity ====="
+          user=ivan
+          expect 400 GET "$ACTIVITY/api/library"                                                   # нет X-User-Id
+          expect 404 POST "$ACTIVITY/api/library" '{"mangaId":"00000000-0000-0000-0000-000000000001","status":"Reading"}' $user
+          expect 400 POST "$ACTIVITY/api/library/$manga/read" "{\"chapterId\":\"$draft\"}" $user   # черновик
+          expect 400 PUT  "$ACTIVITY/api/library/$manga/rating" '{"score":9}' $user                # не в списке
 
-      - name: API log
+          expect 204 POST "$ACTIVITY/api/library/$manga/read" "{\"chapterId\":\"$chapter\"}" $user # сам добавит в Читаю
+          expect 200 GET  "$ACTIVITY/api/library" "" $user
+          test "$(jq -r '.[0].status' resp.json)" = "Reading"
+          test "$(jq '.[0].lastReadChapterNumber == 1' resp.json)" = "true"
+
+          expect 400 PUT  "$ACTIVITY/api/library/$manga/rating" '{"score":11}' $user
+          expect 204 PUT  "$ACTIVITY/api/library/$manga/rating" '{"score":9}' $user
+          expect 400 POST "$ACTIVITY/api/library" "{\"mangaId\":\"$manga\",\"status\":\"Planned\"}" $user  # уже в списке
+          expect 204 PUT  "$ACTIVITY/api/library/$manga/status" '{"status":"Completed"}' $user
+
+          expect 200 GET  "$ACTIVITY/api/manga/$manga/rating"
+          test "$(jq -r '.votes' resp.json)" = "1"
+
+          expect 200 GET  "$ACTIVITY/api/library/$manga/history" "" $user
+          echo "events: $(jq -r '[.[].event] | join(", ")' resp.json)"
+          test "$(jq 'length' resp.json)" -eq 4   # AddedToList, ChapterRead, Rated, ListStatusChanged
+
+          expect 204 DELETE "$ACTIVITY/api/library/$manga" "" $user
+          expect 200 GET  "$ACTIVITY/api/library" "" $user
+          test "$(jq 'length' resp.json)" -eq 0
+          expect 200 GET  "$ACTIVITY/api/manga/$manga/rating"
+          test "$(jq -r '.votes' resp.json)" = "0"
+
+      - name: Logs
         if: always()
-        run: cat api.log || true
+        run: |
+          echo "===== catalog.log"; cat catalog.log || true
+          echo "===== activity.log"; cat activity.log || true
 
   # ---------------------------------------------------------------
-  # 3. Публикация Docker-образа (только после merge/push в main или test)
+  # 3. Публикация Docker-образов (только после merge/push)
   # ---------------------------------------------------------------
   publish:
-    name: Publish Docker image
+    name: Publish ${{ matrix.service }} image
     needs: smoke-test
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -157,12 +204,20 @@ jobs:
       contents: read
       packages: write
 
+    strategy:
+      matrix:
+        include:
+          - service: catalog
+            dockerfile: src/Services/Catalog/Catalog.Api/Dockerfile
+          - service: activity
+            dockerfile: src/Services/Activity/Activity.Api/Dockerfile
+
     steps:
       - uses: actions/checkout@v4
 
       # Имя образа в реестре обязано быть в нижнем регистре (Isaev-El -> isaev-el)
       - name: Image name
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/manga-catalog" >> "$GITHUB_ENV"
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/manga-${{ matrix.service }}" >> "$GITHUB_ENV"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -185,17 +240,9 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: src/Services/Catalog/Catalog.Api/Dockerfile
+          file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ---------------------------------------------------------------
-  # 4. Деплой — появится, когда будет сервер (AWS)
-  # ---------------------------------------------------------------
-  # deploy:
-  #   needs: publish
-  #   environment: ${{ github.ref_name == 'main' && 'production' || 'test' }}
-  #   ...
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}

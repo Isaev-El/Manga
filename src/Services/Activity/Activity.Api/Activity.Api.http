@@ -1,0 +1,70 @@
+@host = http://localhost:5200
+@catalog = http://localhost:5100
+@user = ivan
+
+# Подставьте id из Catalog: манга и ОПУБЛИКОВАННАЯ глава этой манги
+@mangaId = 00000000-0000-0000-0000-000000000000
+@chapterId = 00000000-0000-0000-0000-000000000000
+
+### Сначала возьмите id манги из Catalog
+GET {{catalog}}/api/manga
+
+### Главы манги (нужна глава со статусом Published)
+GET {{catalog}}/api/manga/{{mangaId}}/chapters
+
+### Добавить тайтл в список "В планах"
+POST {{host}}/api/library
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "mangaId": "{{mangaId}}", "status": "Planned" }
+
+### Прочитал главу
+POST {{host}}/api/library/{{mangaId}}/read
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "chapterId": "{{chapterId}}" }
+
+### Переложить в "Читаю"
+PUT {{host}}/api/library/{{mangaId}}/status
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "status": "Reading" }
+
+### Поставить оценку
+PUT {{host}}/api/library/{{mangaId}}/rating
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "score": 9 }
+
+### Мои списки (проекция library_entries)
+GET {{host}}/api/library
+X-User-Id: {{user}}
+
+### Только "Читаю"
+GET {{host}}/api/library?status=Reading
+X-User-Id: {{user}}
+
+### История — все события из таблицы events
+GET {{host}}/api/library/{{mangaId}}/history
+X-User-Id: {{user}}
+
+### Средняя оценка тайтла
+GET {{host}}/api/manga/{{mangaId}}/rating
+
+### Оценка 11 -> 400
+PUT {{host}}/api/library/{{mangaId}}/rating
+X-User-Id: {{user}}
+Content-Type: application/json
+
+{ "score": 11 }
+
+### Без пользователя -> 400
+GET {{host}}/api/library
+
+### Убрать из списков
+DELETE {{host}}/api/library/{{mangaId}}
+X-User-Id: {{user}}
