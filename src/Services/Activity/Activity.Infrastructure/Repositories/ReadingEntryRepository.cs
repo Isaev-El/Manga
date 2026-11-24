@@ -1,11 +1,11 @@
-using Activity.Application;
 using Activity.Application.Abstractions;
 using Activity.Domain;
+using Activity.Domain.Common;
+using Activity.Domain.Events;
 using Activity.Infrastructure.EventStore;
 using Activity.Infrastructure.Persistence;
 using Activity.Infrastructure.Projections;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 
 namespace Activity.Infrastructure.Repositories;
 
@@ -14,20 +14,15 @@ namespace Activity.Infrastructure.Repositories;
 /// Load — читает поток и проигрывает его. Save — дописывает новые события
 /// и обновляет проекцию одной транзакцией.
 /// </summary>
-public class ReadingEntryRepository(ActivityDbContext db) : IReadingEntryRepository
+public class ReadingEntryRepository(ActivityDbContext db, EventStoreService eventStore)
+    : IReadingEntryRepository
 {
     public async Task<ReadingEntry> LoadAsync(string userId, Guid mangaId, CancellationToken ct = default)
     {
         var streamId = ReadingEntry.StreamId(userId, mangaId);
 
-        var records = await db.Events
-            .AsNoTracking()
-            .Where(e => e.StreamId == streamId)
-            .OrderBy(e => e.Version)
-            .ToListAsync(ct);
-
-        var history = records.Select(r => EventSerializer.Deserialize(r.Type, r.Data));
-        return ReadingEntry.Load(userId, mangaId, history);
+        var history = await eventStore.ReadStreamAsync(streamId, ct);
+        return ReadingEntry.Load(userId, mangaId, history.Select(ToReadingEvent));
     }
 
     public async Task SaveAsync(ReadingEntry entry, CancellationToken ct = default)
@@ -47,38 +42,23 @@ public class ReadingEntryRepository(ActivityDbContext db) : IReadingEntryReposit
             db.LibraryEntries.Add(row);
         }
 
-        // Новые события получают номера сразу после последнего загруженного
+        // Проекция получает те же номера версий, что и новые события
         var version = entry.Version;
         foreach (var e in entry.UncommittedEvents)
         {
             version++;
-
-            // 1. Дописываем событие в конец истории
-            db.Events.Add(new EventRecord
-            {
-                StreamId = streamId,
-                Version = version,
-                Type = EventSerializer.TypeName(e),
-                Data = EventSerializer.Serialize(e),
-                OccurredOnUtc = e.OccurredOnUtc
-            });
-
-            // 2. Обновляем проекцию тем же событием
             LibraryEntryProjector.Apply(row, e, version);
         }
 
-        try
-        {
-            // 3. Одна транзакция: и события, и проекция — либо всё, либо ничего
-            await db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
-        {
-            // Кто-то успел записать событие с тем же номером раньше нас
-            db.ChangeTracker.Clear();
-            throw new ConflictException("Данные изменились одновременно с вашим запросом. Повторите действие");
-        }
+        // События и проекция сохраняются одной транзакцией.
+        // При гонке уникальный индекс (StreamId, Version) даст 409.
+        await eventStore.AppendAsync(streamId, entry.Version, entry.UncommittedEvents, ct);
 
         entry.MarkEventsAsCommitted();
     }
+
+    private static ReadingEvent ToReadingEvent(DomainEvent e) =>
+        e as ReadingEvent
+        ?? throw new InvalidOperationException(
+            $"Событие {e.GetType().Name} не принадлежит потоку чтения");
 }

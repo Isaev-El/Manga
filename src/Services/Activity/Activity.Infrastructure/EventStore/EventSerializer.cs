@@ -1,6 +1,7 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Activity.Domain.Common;
 using Activity.Domain.Events;
 
 namespace Activity.Infrastructure.EventStore;
@@ -18,7 +19,10 @@ public static class EventSerializer
         typeof(ListStatusChanged),
         typeof(ChapterRead),
         typeof(Rated),
-        typeof(RemovedFromList)
+        typeof(RemovedFromList),
+        typeof(CommentPosted),
+        typeof(CommentEdited),
+        typeof(CommentDeleted)
     }.ToDictionary(t => t.Name);
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
@@ -27,17 +31,17 @@ public static class EventSerializer
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping        // кириллица читаемо в базе
     };
 
-    public static string TypeName(ReadingEvent e) => e.GetType().Name;
+    public static string TypeName(DomainEvent e) => e.GetType().Name;
 
-    public static string Serialize(ReadingEvent e) =>
+    public static string Serialize(DomainEvent e) =>
         JsonSerializer.Serialize(e, e.GetType(), Options);
 
-    public static ReadingEvent Deserialize(string type, string data)
+    public static DomainEvent Deserialize(string type, string data)
     {
         if (!KnownTypes.TryGetValue(type, out var clrType))
             throw new InvalidOperationException($"Неизвестный тип события: {type}");
 
-        return (ReadingEvent)(JsonSerializer.Deserialize(data, clrType, Options)
-            ?? throw new InvalidOperationException($"Пустые данные события {type}"));
+        return JsonSerializer.Deserialize(data, clrType, Options) as DomainEvent
+            ?? throw new InvalidOperationException($"Пустые данные события {type}");
     }
 }

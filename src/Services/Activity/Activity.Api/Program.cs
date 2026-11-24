@@ -50,6 +50,7 @@ app.UseExceptionHandler(handler => handler.Run(async context =>
     context.Response.StatusCode = error switch
     {
         DomainException => StatusCodes.Status400BadRequest,
+        ForbiddenException => StatusCodes.Status403Forbidden,
         NotFoundException => StatusCodes.Status404NotFound,
         ConflictException => StatusCodes.Status409Conflict,
         CatalogUnavailableException => StatusCodes.Status503ServiceUnavailable,
